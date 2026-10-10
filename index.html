@@ -318,6 +318,7 @@
         var right = document.createElement("span");
         if (run.status !== "completed") { right.textContent = "running..."; right.className = "wait-text"; }
         else if (run.conclusion === "success") { right.textContent = "OK"; right.className = "ok-text"; if (!lastOk) lastOk = when; }
+        else if (run.conclusion === "cancelled" || run.conclusion === "skipped") { right.textContent = "replaced by a newer run"; right.className = "muted"; }
         else { right.textContent = "FAILED"; right.className = "bad-text"; }
         row.appendChild(left); row.appendChild(right); box.appendChild(row);
       });
