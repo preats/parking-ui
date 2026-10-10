@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Parking">
+<title>Guest parking</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1d2330; --muted: #667085; --line: #dfe3ea;
+    --accent: #2f7d32; --accent-text: #ffffff; --danger: #c0392b; --warn: #b26a00;
+    --active-bg: #e3f5e5; --input: #ffffff;
+  }
+  :root:not([data-theme="light"]) { }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12151b; --card: #1c212b; --text: #e8ebf2; --muted: #9aa3b5; --line: #323a49;
+      --accent: #58b45c; --accent-text: #0b1a0c; --danger: #ff7b6b; --warn: #f0b04a;
+      --active-bg: #1f3a24; --input: #12151b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  :root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.4rem; margin: 8px 0 16px; }
+  h2 { font-size: 1rem; margin: 0 0 10px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px; margin-bottom: 14px; }
+  label { display: block; font-size: .85rem; color: var(--muted); margin: 8px 0 4px; }
+  input { width: 100%; min-height: 44px; padding: 8px 10px; font: inherit; color: var(--text);
+    background: var(--input); border: 1px solid var(--line); border-radius: 8px; }
+  input[name="plate"] { text-transform: uppercase; letter-spacing: .04em; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row > div { flex: 1 1 140px; }
+  button { min-height: 44px; padding: 8px 14px; font: inherit; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--text); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button.danger { color: var(--danger); }
+  button.small { min-height: 36px; padding: 4px 10px; font-size: .9rem; }
+  button:disabled { opacity: .5; cursor: default; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  .car { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; }
+  .car.active { background: var(--active-bg); }
+  .car.finished { opacity: .55; }
+  .plate { font-weight: 700; font-size: 1.1rem; letter-spacing: .05em; }
+  .dates { color: var(--muted); font-size: .9rem; }
+  .badge { font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .car.active .badge { color: var(--accent); }
+  #msg { min-height: 1.4em; margin: 0 0 12px; font-weight: 600; }
+  #msg.ok { color: var(--accent); } #msg.err { color: var(--danger); } #msg.info { color: var(--muted); }
+  .banner { padding: 10px 12px; border-radius: 10px; margin-bottom: 14px; border: 1px solid var(--warn);
+    color: var(--warn); font-weight: 600; }
+  .run { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: .9rem; }
+  .run:last-child { border-bottom: 0; }
+  .run a { color: inherit; }
+  .ok-text { color: var(--accent); } .bad-text { color: var(--danger); } .wait-text { color: var(--warn); }
+  details { margin-top: 10px; color: var(--muted); font-size: .9rem; }
+  small, .muted { color: var(--muted); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Guest parking</h1>
+  <div id="msg" class="info" role="status"></div>
+
+  <section id="setup" hidden>
+    <h2>Connect to GitHub (one time on this device)</h2>
+    <label for="owner">GitHub username</label>
+    <input id="owner" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="your GitHub username">
+    <label for="repo">Repository name</label>
+    <input id="repo" autocapitalize="off" autocomplete="off" spellcheck="false" value="parking">
+    <label for="token">Access token</label>
+    <input id="token" type="password" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="github_pat_...">
+    <div class="actions">
+      <button id="connect" class="primary">Connect</button>
+      <button id="cancelSetup" hidden>Cancel</button>
+    </div>
+    <details>
+      <summary>Where do I get the token?</summary>
+      <p>GitHub &rarr; your profile picture &rarr; Settings &rarr; Developer settings &rarr; Personal access tokens &rarr;
+      Fine-grained tokens &rarr; Generate new token. Choose "Only select repositories" and pick your parking repository.
+      Under Repository permissions set <b>Contents</b> and <b>Actions</b> to "Read and write". Generate it and paste it above.
+      The token is stored only in this browser, on this device.</p>
+    </details>
+  </section>
+
+  <div id="app" hidden>
+    <div id="staleBanner" class="banner" hidden></div>
+
+    <section>
+      <h2>Cars</h2>
+      <div id="cars"></div>
+      <div id="badLines" class="muted" hidden></div>
+    </section>
+
+    <section>
+      <h2>Add a car</h2>
+      <label for="plate">License plate</label>
+      <input id="plate" name="plate" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="e.g. AB12345">
+      <div class="row">
+        <div><label for="din">Check-in</label><input id="din" type="date"></div>
+        <div><label for="dout">Check-out</label><input id="dout" type="date"></div>
+      </div>
+      <div class="actions">
+        <button id="add" class="primary">Add car</button>
+      </div>
+      <small>Saving also starts a registration run by itself (about a minute). Otherwise a run happens automatically every 10-15 hours.</small>
+    </section>
+
+    <section>
+      <h2>Registration</h2>
+      <div class="actions" style="margin-top:0">
+        <button id="runNow" class="primary">Register active cars now</button>
+        <button id="dryRun">Test (does not submit)</button>
+        <button id="reload">Refresh</button>
+      </div>
+      <h2 style="margin-top:16px">Latest runs</h2>
+      <div id="runs"><span class="muted">Loading...</span></div>
+    </section>
+
+    <p class="muted"><button id="settings" class="small">Settings</button>
+      <button id="forget" class="small danger">Forget token on this device</button></p>
+  </div>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  var FILE = "cars.txt", WORKFLOW = "parking.yml";
+
+  // ---------- small helpers ----------
+  function $(id) { return document.getElementById(id); }
+  var store = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+    del: function (k) { try { localStorage.removeItem(k); } catch (e) {} }
+  };
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function todayISO() { var d = new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function addDays(iso, n) {
+    var p = iso.split("-"), d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2] + n));
+    return d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate());
+  }
+  function showDate(iso) { var p = iso.split("-"); return p[2] + "/" + p[1] + "/" + p[0]; }
+  function toB64(str) {
+    var bytes = new TextEncoder().encode(str), bin = "";
+    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  }
+  function fromB64(b64) {
+    var bin = atob(String(b64).replace(/\s/g, "")), bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  }
+
+  // Accepts 10/10/2026, 10.10.2026, 10-10-2026 and 2026-10-10 -> "YYYY-MM-DD" or null
+  function parseDate(text) {
+    var parts = String(text).trim().replace(/[.\-]/g, "/").split("/");
+    if (parts.length !== 3) return null;
+    var y, m, d;
+    if (parts[0].length === 4) { y = +parts[0]; m = +parts[1]; d = +parts[2]; }
+    else { d = +parts[0]; m = +parts[1]; y = +parts[2]; }
+    if (!y || !m || !d) return null;
+    var t = new Date(Date.UTC(y, m - 1, d));
+    if (t.getUTCFullYear() !== y || t.getUTCMonth() !== m - 1 || t.getUTCDate() !== d) return null;
+    return y + "-" + pad(m) + "-" + pad(d);
+  }
+
+  // Same rules as the Python script's cars.txt reader
+  function parseCars(text) {
+    var cars = [], bad = [];
+    String(text).split(/\r?\n/).forEach(function (raw) {
+      var line = raw.split("#")[0].trim();
+      if (!line) return;
+      var parts = line.replace(/[,;]/g, " ").split(/\s+/);
+      var plate = (parts[0] || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+      var din = parts.length === 3 ? parseDate(parts[1]) : null;
+      var dout = parts.length === 3 ? parseDate(parts[2]) : null;
+      if (parts.length === 3 && plate.length >= 2 && din && dout && dout > din) {
+        cars.push({ plate: plate, din: din, dout: dout });
+      } else {
+        bad.push(raw.trim());
+      }
+    });
+    return { cars: cars, bad: bad };
+  }
+
+  function serializeCars(cars, bad) {
+    var lines = [
+      "# Guest cars - edited by the parking web page.",
+      "# One car per line:  PLATE  CHECK-IN  CHECK-OUT   (dates as DD/MM/YYYY)",
+      "# Lines starting with # are ignored."
+    ];
+    cars.forEach(function (c) { lines.push(c.plate + "  " + showDate(c.din) + "  " + showDate(c.dout)); });
+    if (bad && bad.length) {
+      lines.push("# The lines below could not be read - fix or delete them:");
+      bad.forEach(function (b) { lines.push(b); });
+    }
+    return lines.join("\n") + "\n";
+  }
+
+  function carStatus(c, today) {
+    var last = addDays(c.dout, -1); // check-out day is not covered (same as the script's default)
+    if (today < c.din) return "upcoming";
+    if (today <= last) return "active";
+    return "finished";
+  }
+
+  // ---------- state ----------
+  var cfg = { owner: store.get("pk_owner") || "", repo: store.get("pk_repo") || "parking", token: store.get("pk_token") || "" };
+  var cars = [], bad = [], sha = null, branch = "main", busy = false;
+
+  function setMsg(text, kind) { var m = $("msg"); m.textContent = text || ""; m.className = kind || "info"; }
+  function setBusy(b) {
+    busy = b;
+    ["add", "runNow", "dryRun", "reload", "connect"].forEach(function (id) { if ($(id)) $(id).disabled = b; });
+    Array.prototype.forEach.call(document.querySelectorAll("button.rm"), function (x) { x.disabled = b; });
+  }
+
+  function gh(path, opts) {
+    opts = opts || {};
+    var headers = {
+      "Accept": "application/vnd.github+json",
+      "Authorization": "Bearer " + cfg.token,
+      "X-GitHub-Api-Version": "2022-11-28"
+    };
+    if (opts.body) headers["Content-Type"] = "application/json";
+    return fetch("https://api.github.com/repos/" + encodeURIComponent(cfg.owner) + "/" + encodeURIComponent(cfg.repo) + path,
+      { method: opts.method || "GET", headers: headers, body: opts.body, cache: "no-store" });
+  }
+
+  function explain(status) {
+    if (status === 401) return "GitHub did not accept the token. It may have expired - create a new one in Settings.";
+    if (status === 403) return "The token is missing a permission (needs Contents and Actions: Read and write).";
+    if (status === 404) return "Repository not found. Check the username, the repository name and that the token covers this repository.";
+    return "GitHub returned an error (" + status + ").";
+  }
+
+  // ---------- loading and saving ----------
+  async function load() {
+    setBusy(true); setMsg("Loading...", "info");
+    try {
+      var r = await gh("");
+      if (!r.ok) { setMsg(explain(r.status), "err"); setBusy(false); if (r.status === 401 || r.status === 404) showSetup(true); return; }
+      branch = (await r.json()).default_branch || "main";
+      r = await gh("/contents/" + FILE + "?ref=" + encodeURIComponent(branch));
+      if (r.status === 404) { cars = []; bad = []; sha = null; }
+      else if (r.ok) {
+        var j = await r.json(); sha = j.sha;
+        var parsed = parseCars(fromB64(j.content)); cars = parsed.cars; bad = parsed.bad;
+      } else { setMsg(explain(r.status), "err"); setBusy(false); return; }
+      cars.sort(function (a, b) { return a.din < b.din ? -1 : a.din > b.din ? 1 : 0; });
+      showApp(); render(); setMsg("", "info");
+      await loadRuns();
+    } catch (e) {
+      setMsg("Could not reach GitHub. Check your internet connection.", "err");
+    }
+    setBusy(false);
+  }
+
+  async function save(successText) {
+    setBusy(true); setMsg("Saving...", "info");
+    try {
+      var body = { message: "Update cars (web page)", content: toB64(serializeCars(cars, bad)), branch: branch };
+      if (sha) body.sha = sha;
+      var r = await gh("/contents/" + FILE, { method: "PUT", body: JSON.stringify(body) });
+      if (r.status === 409 || r.status === 422) {
+        setMsg("The list was changed somewhere else. Reloading - please repeat your change.", "err");
+        setBusy(false); await load(); return;
+      }
+      if (!r.ok) { setMsg(explain(r.status), "err"); setBusy(false); return; }
+      sha = (await r.json()).content.sha;
+      render(); setMsg(successText || "Saved.", "ok");
+      setTimeout(loadRuns, 8000); setTimeout(loadRuns, 45000);
+    } catch (e) {
+      setMsg("Could not save - no connection? Nothing was changed.", "err");
+      setBusy(false); await load(); return;
+    }
+    setBusy(false);
+  }
+
+  async function dispatch(dry) {
+    var what = dry ? "Run a test (nothing is submitted)?" : "Register all cars that are active today? This creates real parking permits.";
+    if (!confirm(what)) return;
+    setBusy(true); setMsg("Starting...", "info");
+    try {
+      var payload = { ref: branch };
+      if (dry) payload.inputs = { dry_run: "true" };
+      var r = await gh("/actions/workflows/" + WORKFLOW + "/dispatches", { method: "POST", body: JSON.stringify(payload) });
+      if (r.status === 204) {
+        setMsg("Started. It takes about a minute - the list below updates by itself.", "ok");
+        setTimeout(loadRuns, 6000); setTimeout(loadRuns, 30000); setTimeout(loadRuns, 70000);
+      } else { setMsg(explain(r.status), "err"); }
+    } catch (e) { setMsg("Could not reach GitHub.", "err"); }
+    setBusy(false);
+  }
+
+  async function loadRuns() {
+    try {
+      var r = await gh("/actions/workflows/" + WORKFLOW + "/runs?per_page=6");
+      if (!r.ok) { $("runs").textContent = "Could not read the run list."; return; }
+      var runs = (await r.json()).workflow_runs || [];
+      var box = $("runs"); box.textContent = "";
+      if (!runs.length) { box.textContent = "No runs yet."; }
+      var lastOk = null;
+      runs.forEach(function (run) {
+        var row = document.createElement("div"); row.className = "run";
+        var left = document.createElement("a"); left.href = run.html_url; left.target = "_blank"; left.rel = "noopener";
+        var when = new Date(run.created_at);
+        left.textContent = when.toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) +
+          (run.event === "push" ? "  (list changed)" : "  (automatic or manual)");
+        var right = document.createElement("span");
+        if (run.status !== "completed") { right.textContent = "running..."; right.className = "wait-text"; }
+        else if (run.conclusion === "success") { right.textContent = "OK"; right.className = "ok-text"; if (!lastOk) lastOk = when; }
+        else { right.textContent = "FAILED"; right.className = "bad-text"; }
+        row.appendChild(left); row.appendChild(right); box.appendChild(row);
+      });
+      var banner = $("staleBanner");
+      if (!lastOk) { banner.hidden = !runs.length; banner.textContent = runs.length ? "No successful run among the latest runs - check the list below." : ""; }
+      else {
+        var hours = (Date.now() - lastOk.getTime()) / 3600000;
+        if (hours > 19) { banner.hidden = false; banner.textContent = "Last successful run was " + Math.round(hours) + " hours ago."; }
+        else banner.hidden = true;
+      }
+    } catch (e) { /* leave the list as it was */ }
+  }
+
+  // ---------- drawing ----------
+  function render() {
+    var list = $("cars"), today = todayISO();
+    list.textContent = "";
+    if (!cars.length) { var p = document.createElement("p"); p.className = "muted"; p.textContent = "No cars yet."; list.appendChild(p); }
+    cars.forEach(function (c, i) {
+      var st = carStatus(c, today);
+      var card = document.createElement("div"); card.className = "car " + st;
+      var info = document.createElement("div");
+      var pl = document.createElement("div"); pl.className = "plate"; pl.textContent = c.plate;
+      var dt = document.createElement("div"); dt.className = "dates"; dt.textContent = showDate(c.din) + "  \u2192  " + showDate(c.dout);
+      var bd = document.createElement("div"); bd.className = "badge";
+      bd.textContent = st === "active" ? "Active today" : st === "upcoming" ? "Upcoming" : "Finished";
+      info.appendChild(pl); info.appendChild(dt); info.appendChild(bd);
+      var rm = document.createElement("button"); rm.className = "small danger rm"; rm.textContent = "Remove";
+      rm.addEventListener("click", function () {
+        if (busy) return;
+        if (!confirm("Remove " + c.plate + "?")) return;
+        cars.splice(i, 1); save("Removed " + c.plate + ".");
+      });
+      card.appendChild(info); card.appendChild(rm); list.appendChild(card);
+    });
+    var bl = $("badLines");
+    if (bad.length) { bl.hidden = false; bl.textContent = "Warning: " + bad.length + " line(s) in cars.txt could not be read and are kept as they are: " + bad.join(" | "); }
+    else bl.hidden = true;
+  }
+
+  function showSetup(show) {
+    $("setup").hidden = !show;
+    $("owner").value = cfg.owner; $("repo").value = cfg.repo; $("token").value = "";
+    $("cancelSetup").hidden = !(cfg.token && $("app").hidden === false);
+  }
+  function showApp() { $("app").hidden = false; $("setup").hidden = true; }
+
+  function resetAddForm() {
+    var t = todayISO();
+    $("plate").value = ""; $("din").value = t; $("dout").value = addDays(t, 3);
+  }
+
+  // ---------- buttons ----------
+  $("connect").addEventListener("click", function () {
+    var o = $("owner").value.trim(), r = $("repo").value.trim(), t = $("token").value.trim() || cfg.token;
+    if (!o || !r || !t) { setMsg("Fill in the username, repository name and token.", "err"); return; }
+    cfg = { owner: o, repo: r, token: t };
+    store.set("pk_owner", o); store.set("pk_repo", r); store.set("pk_token", t);
+    load();
+  });
+  $("cancelSetup").addEventListener("click", function () { $("setup").hidden = true; });
+  $("settings").addEventListener("click", function () { showSetup(true); $("cancelSetup").hidden = false; });
+  $("forget").addEventListener("click", function () {
+    if (!confirm("Remove the saved token from this device?")) return;
+    store.del("pk_token"); cfg.token = ""; $("app").hidden = true; showSetup(true); setMsg("Token removed from this device.", "info");
+  });
+  $("reload").addEventListener("click", function () { if (!busy) load(); });
+  $("runNow").addEventListener("click", function () { if (!busy) dispatch(false); });
+  $("dryRun").addEventListener("click", function () { if (!busy) dispatch(true); });
+  $("add").addEventListener("click", function () {
+    if (busy) return;
+    var plate = $("plate").value.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+    var din = parseDate($("din").value), dout = parseDate($("dout").value);
+    if (plate.length < 2) { setMsg("Type the license plate.", "err"); return; }
+    if (!din || !dout) { setMsg("Pick both dates.", "err"); return; }
+    if (dout <= din) { setMsg("Check-out must be after check-in.", "err"); return; }
+    cars.push({ plate: plate, din: din, dout: dout });
+    cars.sort(function (a, b) { return a.din < b.din ? -1 : a.din > b.din ? 1 : 0; });
+    resetAddForm();
+    save("Added " + plate + ".");
+  });
+
+  // ---------- start ----------
+  resetAddForm();
+  if (cfg.owner && cfg.repo && cfg.token) { load(); }
+  else { showSetup(true); setMsg("", "info"); }
+
+  window.__parking = { parseCars: parseCars, serializeCars: serializeCars, toB64: toB64, fromB64: fromB64, carStatus: carStatus, parseDate: parseDate };
+})();
+</script>
+</body>
+</html>
