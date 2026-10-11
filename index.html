@@ -120,6 +120,12 @@
         <button id="dryRun">Test (does not submit)</button>
         <button id="reload">Refresh</button>
       </div>
+      <label style="display:flex;gap:8px;align-items:flex-start;margin-top:14px;font-size:1rem;color:var(--text)">
+        <input id="pubOn" type="checkbox" style="width:auto;min-height:0;margin-top:5px">
+        <span>Keep the public guest page up to date<br>
+          <small>Shows partly hidden plates (like AB&bull;&bull;&bull;45) and dates on <a id="guestLink" href="guests.html" target="_blank" rel="noopener">the guest page</a>. Needs the token to cover this page's repository too. Tick this on each device you edit from.</small></span>
+      </label>
+      <div class="actions"><button id="pubNow" class="small">Update public page now</button></div>
       <h2 style="margin-top:16px">Latest runs</h2>
       <div id="runs"><span class="muted">Loading...</span></div>
     </section>
@@ -219,11 +225,11 @@
   function setMsg(text, kind) { var m = $("msg"); m.textContent = text || ""; m.className = kind || "info"; }
   function setBusy(b) {
     busy = b;
-    ["add", "runNow", "dryRun", "reload", "connect"].forEach(function (id) { if ($(id)) $(id).disabled = b; });
+    ["add", "runNow", "dryRun", "reload", "connect", "pubNow"].forEach(function (id) { if ($(id)) $(id).disabled = b; });
     Array.prototype.forEach.call(document.querySelectorAll("button.rm"), function (x) { x.disabled = b; });
   }
 
-  function gh(path, opts) {
+  function api(repo, path, opts) {
     opts = opts || {};
     var headers = {
       "Accept": "application/vnd.github+json",
@@ -231,15 +237,56 @@
       "X-GitHub-Api-Version": "2022-11-28"
     };
     if (opts.body) headers["Content-Type"] = "application/json";
-    return fetch("https://api.github.com/repos/" + encodeURIComponent(cfg.owner) + "/" + encodeURIComponent(cfg.repo) + path,
+    return fetch("https://api.github.com/repos/" + encodeURIComponent(cfg.owner) + "/" + encodeURIComponent(repo) + path,
       { method: opts.method || "GET", headers: headers, body: opts.body, cache: "no-store" });
   }
+
+  function gh(path, opts) { return api(cfg.repo, path, opts); }
 
   function explain(status) {
     if (status === 401) return "GitHub did not accept the token. It may have expired - create a new one in Settings.";
     if (status === 403) return "The token is missing a permission (needs Contents and Actions: Read and write).";
     if (status === 404) return "Repository not found. Check the username, the repository name and that the token covers this repository.";
     return "GitHub returned an error (" + status + ").";
+  }
+
+  // ---------- public guest page (partly hidden plates) ----------
+  function maskPlate(p) {
+    var n = p.length;
+    if (n <= 3) return p.charAt(0) + new Array(n).join("\u2022");
+    var keep = n <= 5 ? 1 : 2;
+    return p.slice(0, keep) + new Array(n - 2 * keep + 1).join("\u2022") + p.slice(n - keep);
+  }
+  function uiRepo() {
+    try {
+      if (/github\.io$/.test(location.hostname)) {
+        var seg = location.pathname.split("/")[1];
+        if (seg) return seg;
+      }
+    } catch (e) {}
+    return "parking-ui";
+  }
+  // returns "" when it worked, otherwise a short explanation
+  async function publishPublic() {
+    var today = todayISO();
+    var stays = cars.filter(function (c) { return c.dout >= today; })
+      .map(function (c) { return { plate: maskPlate(c.plate), in: c.din, out: c.dout }; });
+    var content = JSON.stringify({ updated: new Date().toISOString(), stays: stays }, null, 2) + "\n";
+    try {
+      var path = "/contents/public.json";
+      var repo = uiRepo();
+      var r = await api(repo, path);
+      var sha = null;
+      if (r.ok) { sha = (await r.json()).sha; }
+      else if (r.status !== 404) { return "give the token access to the " + repo + " repository too (Contents: Read and write)"; }
+      var body = { message: "Update public list", content: toB64(content) };
+      if (sha) body.sha = sha;
+      r = await api(repo, path, { method: "PUT", body: JSON.stringify(body) });
+      if (!r.ok) { return "give the token access to the " + repo + " repository too (Contents: Read and write)"; }
+      return "";
+    } catch (e) {
+      return "no connection to GitHub";
+    }
   }
 
   // ---------- loading and saving ----------
@@ -278,6 +325,10 @@
       sha = (await r.json()).content.sha;
       render(); setMsg(successText || "Saved.", "ok");
       setTimeout(loadRuns, 8000); setTimeout(loadRuns, 45000);
+      if (store.get("pk_public") === "1") {
+        var problem = await publishPublic();
+        if (problem) setMsg((successText || "Saved.") + " But the public page was not updated: " + problem + ".", "err");
+      }
     } catch (e) {
       setMsg("Could not save - no connection? Nothing was changed.", "err");
       setBusy(false); await load(); return;
@@ -386,6 +437,19 @@
     store.del("pk_token"); cfg.token = ""; $("app").hidden = true; showSetup(true); setMsg("Token removed from this device.", "info");
   });
   $("reload").addEventListener("click", function () { if (!busy) load(); });
+  $("pubOn").checked = store.get("pk_public") === "1";
+  async function publishNow() {
+    setBusy(true); setMsg("Updating the public page...", "info");
+    var problem = await publishPublic();
+    if (problem) setMsg("The public page was not updated: " + problem + ".", "err");
+    else setMsg("Public page updated. It can take about a minute to show on the site.", "ok");
+    setBusy(false);
+  }
+  $("pubOn").addEventListener("change", function () {
+    store.set("pk_public", $("pubOn").checked ? "1" : "0");
+    if ($("pubOn").checked && !busy) publishNow();
+  });
+  $("pubNow").addEventListener("click", function () { if (!busy) publishNow(); });
   $("runNow").addEventListener("click", function () { if (!busy) dispatch(false); });
   $("dryRun").addEventListener("click", function () { if (!busy) dispatch(true); });
   $("add").addEventListener("click", function () {
@@ -406,7 +470,7 @@
   if (cfg.owner && cfg.repo && cfg.token) { load(); }
   else { showSetup(true); setMsg("", "info"); }
 
-  window.__parking = { parseCars: parseCars, serializeCars: serializeCars, toB64: toB64, fromB64: fromB64, carStatus: carStatus, parseDate: parseDate };
+  window.__parking = { parseCars: parseCars, serializeCars: serializeCars, toB64: toB64, fromB64: fromB64, carStatus: carStatus, parseDate: parseDate, maskPlate: maskPlate };
 })();
 </script>
 </body>

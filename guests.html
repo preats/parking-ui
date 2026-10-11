@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Parking for guests</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1d2330; --muted: #667085; --line: #dfe3ea;
+    --accent: #2f7d32; --active-bg: #e3f5e5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1c212b; --text: #e8ebf2; --muted: #9aa3b5; --line: #323a49;
+      --accent: #58b45c; --active-bg: #1f3a24;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  :root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  main { max-width: 720px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.5rem; margin: 8px 0 8px; }
+  h2 { font-size: 1.05rem; margin: 0 0 10px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+  img { display: block; max-width: 100%; height: auto; border-radius: 8px; }
+  .stay { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; }
+  .stay.now { background: var(--active-bg); }
+  .plate { font-weight: 700; font-size: 1.1rem; letter-spacing: .06em; }
+  .dates { color: var(--muted); }
+  .badge { font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .stay.now .badge { color: var(--accent); }
+  small, .muted { color: var(--muted); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title"></h1>
+  <p id="intro" class="muted"></p>
+
+  <section id="mapSection" hidden>
+    <h2>Where to park</h2>
+    <a id="mapLink" target="_blank" rel="noopener"><img id="mapImg" alt="Map showing where guests can park"></a>
+    <small>Tap the picture to open it in full size.</small>
+  </section>
+
+  <section>
+    <h2>Registered cars</h2>
+    <div id="list" class="muted">Loading...</div>
+    <small id="updated"></small>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  // ----- edit these three lines to change the text and picture -----
+  var TITLE = "Parking for guests";
+  var INTRO = "Guest parking is in the marked area on the picture. Your car is registered for your stay. Please check that the first and last characters of your plate are in the list below.";
+  var MAP_FILES = ["parking-map.jpg", "parking-map.jpeg", "parking-map.png", "parking-map.webp"];
+  // ------------------------------------------------------------------
+
+  function $(id) { return document.getElementById(id); }
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function todayISO() { var d = new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function showDate(iso) { var p = iso.split("-"); return p[2] + "/" + p[1] + "/" + p[0]; }
+
+  document.title = TITLE;
+  $("title").textContent = TITLE;
+  $("intro").textContent = INTRO;
+
+  // picture: try each file name until one exists
+  (function loadMap(i) {
+    if (i >= MAP_FILES.length) return;
+    var img = new Image();
+    img.onload = function () {
+      $("mapImg").src = MAP_FILES[i];
+      $("mapLink").href = MAP_FILES[i];
+      $("mapSection").hidden = false;
+    };
+    img.onerror = function () { loadMap(i + 1); };
+    img.src = MAP_FILES[i];
+  })(0);
+
+  // list of registered stays
+  function render(data) {
+    var list = $("list");
+    list.textContent = "";
+    var today = todayISO();
+    var stays = (data.stays || []).filter(function (s) { return s.out >= today; })
+      .sort(function (a, b) { return a.in < b.in ? -1 : a.in > b.in ? 1 : 0; });
+    if (!stays.length) { list.textContent = "No cars are registered at the moment."; return; }
+    stays.forEach(function (s) {
+      var row = document.createElement("div");
+      var now = s.in <= today;
+      row.className = "stay" + (now ? " now" : "");
+      var left = document.createElement("div");
+      var pl = document.createElement("div"); pl.className = "plate"; pl.textContent = s.plate;
+      var dt = document.createElement("div"); dt.className = "dates"; dt.textContent = showDate(s.in) + "  \u2192  " + showDate(s.out);
+      left.appendChild(pl); left.appendChild(dt);
+      var bd = document.createElement("div"); bd.className = "badge";
+      bd.textContent = now ? (s.out === today ? "Check-out today" : "Registered now") : "Upcoming";
+      row.appendChild(left); row.appendChild(bd);
+      list.appendChild(row);
+    });
+    if (data.updated) {
+      var d = new Date(data.updated);
+      $("updated").textContent = "List updated " + d.toLocaleString([], { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+    }
+  }
+
+  fetch("public.json?t=" + Date.now(), { cache: "no-store" })
+    .then(function (r) { if (!r.ok) throw new Error("none"); return r.json(); })
+    .then(render)
+    .catch(function () { $("list").textContent = "No cars are registered at the moment."; });
+})();
+</script>
+</body>
+</html>
