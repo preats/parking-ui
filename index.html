@@ -123,7 +123,7 @@
       <label style="display:flex;gap:8px;align-items:flex-start;margin-top:14px;font-size:1rem;color:var(--text)">
         <input id="pubOn" type="checkbox" style="width:auto;min-height:0;margin-top:5px">
         <span>Keep the public guest page up to date<br>
-          <small>Shows partly hidden plates (like AB&bull;&bull;&bull;45) and dates on <a id="guestLink" href="guests.html" target="_blank" rel="noopener">the guest page</a>. Needs the token to cover this page's repository too. Tick this on each device you edit from.</small></span>
+          <small>Shows only the cars staying right now, with partly hidden plates (like AB&bull;&bull;&bull;45), on <a id="guestLink" href="guests.html" target="_blank" rel="noopener">the guest page</a>. Future bookings are never published. Needs the token to cover this page's repository too. Tick this on each device you edit from.</small></span>
       </label>
       <div class="actions"><button id="pubNow" class="small">Update public page now</button></div>
       <h2 style="margin-top:16px">Latest runs</h2>
@@ -269,7 +269,7 @@
   // returns "" when it worked, otherwise a short explanation
   async function publishPublic() {
     var today = todayISO();
-    var stays = cars.filter(function (c) { return c.dout >= today; })
+    var stays = cars.filter(function (c) { return c.din <= today && c.dout >= today; })
       .map(function (c) { return { plate: maskPlate(c.plate), in: c.din, out: c.dout }; });
     var content = JSON.stringify({ updated: new Date().toISOString(), stays: stays }, null, 2) + "\n";
     try {

@@ -59,8 +59,8 @@
   "use strict";
 
   // ----- edit these three lines to change the text and picture -----
-  var TITLE = "Parking for Edouard Suensons Gade 6";
-  var INTRO = "Guest parking is in the marked area on the picture. Your car is registered for your stay. Please check that the first and last characters of your plate are in the list below and that the dates match.";
+  var TITLE = "Parking for guests";
+  var INTRO = "Guest parking is in the marked area on the picture. Your car is registered for your stay. Please check that the first and last characters of your plate are in the list below.";
   var MAP_FILES = ["parking-map.jpg", "parking-map.jpeg", "parking-map.png", "parking-map.webp"];
   // ------------------------------------------------------------------
 
@@ -91,19 +91,18 @@
     var list = $("list");
     list.textContent = "";
     var today = todayISO();
-    var stays = (data.stays || []).filter(function (s) { return s.out >= today; })
+    var stays = (data.stays || []).filter(function (s) { return s.in <= today && s.out >= today; })
       .sort(function (a, b) { return a.in < b.in ? -1 : a.in > b.in ? 1 : 0; });
     if (!stays.length) { list.textContent = "No cars are registered at the moment."; return; }
     stays.forEach(function (s) {
       var row = document.createElement("div");
-      var now = s.in <= today;
-      row.className = "stay" + (now ? " now" : "");
+      row.className = "stay now";
       var left = document.createElement("div");
       var pl = document.createElement("div"); pl.className = "plate"; pl.textContent = s.plate;
       var dt = document.createElement("div"); dt.className = "dates"; dt.textContent = showDate(s.in) + "  \u2192  " + showDate(s.out);
       left.appendChild(pl); left.appendChild(dt);
       var bd = document.createElement("div"); bd.className = "badge";
-      bd.textContent = now ? (s.out === today ? "Check-out today" : "Registered now") : "Upcoming";
+      bd.textContent = s.out === today ? "Check-out today" : "Registered now";
       row.appendChild(left); row.appendChild(bd);
       list.appendChild(row);
     });
