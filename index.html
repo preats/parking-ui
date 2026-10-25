@@ -61,6 +61,16 @@
   .ok-text { color: var(--accent); } .bad-text { color: var(--danger); } .wait-text { color: var(--warn); }
   details { margin-top: 10px; color: var(--muted); font-size: .9rem; }
   small, .muted { color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  .chip { display: inline-flex; align-items: stretch; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .chip button { border: 0; border-radius: 0; min-height: 40px; }
+  .chip .x { color: var(--danger); padding: 4px 12px; }
+  .lookup { min-height: 1.3em; margin-top: 6px; font-size: .95rem; color: var(--muted); }
+  .lookup.good { color: var(--accent); } .lookup.bad { color: var(--danger); }
+  .car .side { display: flex; gap: 6px; align-items: center; }
+  .car .note { color: var(--text); font-size: .9rem; }
+  button.star { min-width: 40px; }
+  pre.raw { white-space: pre-wrap; word-break: break-all; font-size: .8rem; max-height: 200px; overflow: auto; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -77,6 +87,9 @@
     <input id="repo" autocapitalize="off" autocomplete="off" spellcheck="false" value="parking">
     <label for="token">Access token</label>
     <input id="token" type="password" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="github_pat_...">
+    <label for="lookupKey">Car lookup key (optional)</label>
+    <input id="lookupKey" type="password" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="optional - free key from motorapi.dk">
+    <small>With a key, the page shows make and model when you type a Danish plate, so you can spot typos. Stored only on this device.</small>
     <div class="actions">
       <button id="connect" class="primary">Connect</button>
       <button id="cancelSetup" hidden>Cancel</button>
@@ -99,16 +112,27 @@
       <div id="badLines" class="muted" hidden></div>
     </section>
 
+    <section id="favSection" hidden>
+      <h2>Favorites</h2>
+      <div id="favs" class="chips"></div>
+      <small>Tap a favorite to fill in the plate, then pick the dates.</small>
+    </section>
+
     <section>
       <h2>Add a car</h2>
       <label for="plate">License plate</label>
       <input id="plate" name="plate" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="e.g. AB12345">
+      <div id="lookupInfo" class="lookup" aria-live="polite"></div>
+      <label for="label">Name or note (optional, kept with favorites)</label>
+      <input id="label" autocomplete="off" placeholder="e.g. Mette - white Golf">
       <div class="row">
         <div><label for="din">Check-in</label><input id="din" type="date"></div>
         <div><label for="dout">Check-out</label><input id="dout" type="date"></div>
       </div>
       <div class="actions">
         <button id="add" class="primary">Add car</button>
+        <button id="favBtn">&#9734; Save as favorite</button>
+        <button id="lookupBtn" class="small">Look up car</button>
       </div>
       <small>Saving also starts a registration run by itself (about a minute). Otherwise a run happens automatically every 10-15 hours.</small>
     </section>
@@ -221,11 +245,15 @@
   // ---------- state ----------
   var cfg = { owner: store.get("pk_owner") || "", repo: store.get("pk_repo") || "parking", token: store.get("pk_token") || "" };
   var cars = [], bad = [], sha = null, branch = "main", busy = false;
+  var favorites = [], favSha = null, lookupTimer = null, lastLookup = { plate: "", text: "" };
+  // Car lookup service (MotorAPI): change these two lines if the service changes
+  var LOOKUP_BASE = "https://v1.motorapi.dk/vehicles/", LOOKUP_HEADER = "X-AUTH-TOKEN";
+  var DK_PLATE = /^[A-Z]{2}[0-9]{5}$/;
 
   function setMsg(text, kind) { var m = $("msg"); m.textContent = text || ""; m.className = kind || "info"; }
   function setBusy(b) {
     busy = b;
-    ["add", "runNow", "dryRun", "reload", "connect", "pubNow"].forEach(function (id) { if ($(id)) $(id).disabled = b; });
+    ["add", "runNow", "dryRun", "reload", "connect", "pubNow", "favBtn"].forEach(function (id) { if ($(id)) $(id).disabled = b; });
     Array.prototype.forEach.call(document.querySelectorAll("button.rm"), function (x) { x.disabled = b; });
   }
 
@@ -289,6 +317,148 @@
     }
   }
 
+  // ---------- car lookup (Danish plates) ----------
+  function normPlate(v) { return String(v || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase(); }
+  function vcacheGet() { try { return JSON.parse(store.get("pk_vcache") || "{}"); } catch (e) { return {}; } }
+  function vcachePut(plate, text, status) {
+    var c = vcacheGet(), keys = Object.keys(c);
+    if (keys.length > 60) delete c[keys[0]];
+    c[plate] = { text: text, status: status || "" };
+    store.set("pk_vcache", JSON.stringify(c));
+  }
+  function pick(o, names) {
+    var keys = Object.keys(o);
+    for (var i = 0; i < names.length; i++) {
+      for (var k = 0; k < keys.length; k++) {
+        if (keys[k].toLowerCase() === names[i] && o[keys[k]] != null && typeof o[keys[k]] !== "object" && String(o[keys[k]]).trim() !== "") return String(o[keys[k]]).trim();
+      }
+    }
+    return "";
+  }
+  // Tolerant: the service's exact field names were not verified, so several spellings are tried.
+  function describeVehicle(j) {
+    var o = (j && typeof j === "object") ? j : {};
+    if (o.data && typeof o.data === "object" && !Array.isArray(o.data)) o = o.data;
+    var make = pick(o, ["make", "brand", "manufacturer", "maerke", "m\u00e6rke"]);
+    var model = pick(o, ["model", "model_name", "modelname"]);
+    var variant = pick(o, ["variant", "version"]);
+    var year = pick(o, ["model_year", "modelyear", "year"]);
+    var status = pick(o, ["status", "registration_status"]);
+    var text = [make, model, variant].filter(Boolean).join(" ");
+    if (text && year) text += " (" + year + ")";
+    return { text: text, status: status };
+  }
+  function setLookup(text, kind, raw) {
+    var el = $("lookupInfo"); el.textContent = text || ""; el.className = "lookup" + (kind ? " " + kind : "");
+    if (raw) {
+      var d = document.createElement("details"), sm = document.createElement("summary"), pre = document.createElement("pre");
+      sm.textContent = "Show raw answer"; pre.className = "raw"; pre.textContent = JSON.stringify(raw, null, 2);
+      d.appendChild(sm); d.appendChild(pre); el.appendChild(d);
+    }
+  }
+  async function doLookup(plate, force) {
+    if (!plate) { setLookup("", ""); return; }
+    var key = store.get("pk_motorapi") || "";
+    if (!key) { setLookup(DK_PLATE.test(plate) ? "Add a free car lookup key under Settings to see the make and model here." : "", ""); return; }
+    var cached = vcacheGet()[plate];
+    if (cached && !force) { lastLookup = { plate: plate, text: cached.text }; setLookup(cached.text + (cached.status ? "  \u00b7  " + cached.status : ""), "good"); return; }
+    setLookup("Looking up...", "");
+    try {
+      var headers = { "Accept": "application/json" }; headers[LOOKUP_HEADER] = key;
+      var r = await fetch(LOOKUP_BASE + encodeURIComponent(plate), { headers: headers });
+      if (normPlate($("plate").value) !== plate) return; // the user already typed something else
+      if (r.status === 404) { setLookup("No vehicle found for " + plate + " - check the plate for typos.", "bad"); return; }
+      if (r.status === 401 || r.status === 403) { setLookup("The lookup key was not accepted. Check it under Settings.", "bad"); return; }
+      if (r.status === 429) { setLookup("The daily lookup limit is used up. Try again tomorrow.", "bad"); return; }
+      if (!r.ok) { setLookup("The lookup service answered with an error (" + r.status + ").", "bad"); return; }
+      var j = await r.json(), d = describeVehicle(j);
+      if (!d.text) { setLookup("Vehicle found, but its details could not be read.", "", j); return; }
+      lastLookup = { plate: plate, text: d.text };
+      vcachePut(plate, d.text, d.status);
+      setLookup(d.text + (d.status ? "  \u00b7  " + d.status : ""), "good", j);
+    } catch (e) {
+      setLookup("Could not look up the plate (the service may not allow lookups from this page). Adding the car still works.", "bad");
+    }
+  }
+  function scheduleLookup() {
+    clearTimeout(lookupTimer);
+    var plate = normPlate($("plate").value);
+    updateFavBtn();
+    if (!DK_PLATE.test(plate)) { setLookup("", ""); return; }
+    lookupTimer = setTimeout(function () { doLookup(plate, false); }, 600);
+  }
+
+  // ---------- favorites (stored in favorites.json in the private repository) ----------
+  function favFor(plate) { for (var i = 0; i < favorites.length; i++) if (favorites[i].plate === plate) return favorites[i]; return null; }
+  function updateFavBtn() {
+    var plate = normPlate($("plate").value), b = $("favBtn");
+    b.innerHTML = favFor(plate) ? "&#9733; Saved as favorite" : "&#9734; Save as favorite";
+  }
+  function renderFavs() {
+    var box = $("favs"); box.textContent = "";
+    $("favSection").hidden = !favorites.length;
+    favorites.forEach(function (f) {
+      var chip = document.createElement("span"); chip.className = "chip";
+      var b = document.createElement("button"); b.textContent = f.plate + (f.label ? "  \u00b7  " + f.label : "");
+      b.addEventListener("click", function () {
+        $("plate").value = f.plate; $("label").value = f.label || ""; scheduleLookup();
+        $("plate").scrollIntoView && $("plate").scrollIntoView({ block: "center" });
+      });
+      var x = document.createElement("button"); x.className = "x"; x.textContent = "\u00d7"; x.title = "Remove favorite";
+      x.addEventListener("click", function () {
+        if (busy || !confirm("Remove " + f.plate + " from favorites?")) return;
+        favorites = favorites.filter(function (g) { return g.plate !== f.plate; }); saveFavorites("Removed from favorites.");
+      });
+      chip.appendChild(b); chip.appendChild(x); box.appendChild(chip);
+    });
+    updateFavBtn();
+  }
+  async function loadFavorites() {
+    try {
+      var r = await gh("/contents/favorites.json?ref=" + encodeURIComponent(branch));
+      if (r.status === 404) { favorites = []; favSha = null; }
+      else if (r.ok) {
+        var j = await r.json(), d = {}; favSha = j.sha;
+        try { d = JSON.parse(fromB64(j.content)); } catch (e) { d = {}; }
+        favorites = (d.favorites || []).filter(function (f) { return f && f.plate; })
+          .map(function (f) { return { plate: normPlate(f.plate), label: String(f.label || "") }; });
+      }
+    } catch (e) { /* favorites are optional */ }
+    renderFavs();
+  }
+  async function saveFavorites(okText) {
+    favorites.sort(function (a, b) { return a.plate < b.plate ? -1 : a.plate > b.plate ? 1 : 0; });
+    setBusy(true); setMsg("Saving favorite...", "info");
+    try {
+      var body = { message: "Update favorites (web page)", content: toB64(JSON.stringify({ favorites: favorites }, null, 2) + "\n"), branch: branch };
+      if (favSha) body.sha = favSha;
+      var r = await gh("/contents/favorites.json", { method: "PUT", body: JSON.stringify(body) });
+      if (r.status === 409 || r.status === 422) {
+        setMsg("The favorites were changed somewhere else. Reloaded - please try again.", "err");
+        setBusy(false); await loadFavorites(); return;
+      }
+      if (!r.ok) { setMsg(explain(r.status), "err"); setBusy(false); await loadFavorites(); return; }
+      favSha = (await r.json()).content.sha;
+      renderFavs(); render(); setMsg(okText || "Saved.", "ok");
+    } catch (e) {
+      setMsg("Could not save the favorite - no connection?", "err");
+      await loadFavorites();
+    }
+    setBusy(false);
+  }
+  function toggleFavorite(plate, labelGuess) {
+    if (busy) return;
+    if (plate.length < 2) { setMsg("Type the license plate first.", "err"); return; }
+    if (favFor(plate)) {
+      if (!confirm("Remove " + plate + " from favorites?")) return;
+      favorites = favorites.filter(function (f) { return f.plate !== plate; });
+      saveFavorites("Removed " + plate + " from favorites.");
+    } else {
+      favorites.push({ plate: plate, label: labelGuess || "" });
+      saveFavorites("Saved " + plate + " as favorite.");
+    }
+  }
+
   // ---------- loading and saving ----------
   async function load() {
     setBusy(true); setMsg("Loading...", "info");
@@ -303,6 +473,7 @@
         var parsed = parseCars(fromB64(j.content)); cars = parsed.cars; bad = parsed.bad;
       } else { setMsg(explain(r.status), "err"); setBusy(false); return; }
       cars.sort(function (a, b) { return a.din < b.din ? -1 : a.din > b.din ? 1 : 0; });
+      await loadFavorites();
       showApp(); render(); setMsg("", "info");
       await loadRuns();
     } catch (e) {
@@ -396,14 +567,22 @@
       var dt = document.createElement("div"); dt.className = "dates"; dt.textContent = showDate(c.din) + "  \u2192  " + showDate(c.dout);
       var bd = document.createElement("div"); bd.className = "badge";
       bd.textContent = st === "active" ? "Active today" : st === "upcoming" ? "Upcoming" : "Finished";
-      info.appendChild(pl); info.appendChild(dt); info.appendChild(bd);
+      info.appendChild(pl);
+      var fav = favFor(c.plate), cachedV = vcacheGet()[c.plate];
+      var noteText = (fav && fav.label) || (cachedV && cachedV.text) || "";
+      if (noteText) { var nt = document.createElement("div"); nt.className = "note"; nt.textContent = noteText; info.appendChild(nt); }
+      info.appendChild(dt); info.appendChild(bd);
+      var star = document.createElement("button"); star.className = "small star"; star.title = fav ? "Remove from favorites" : "Save as favorite";
+      star.innerHTML = fav ? "&#9733;" : "&#9734;";
+      star.addEventListener("click", function () { toggleFavorite(c.plate, noteText); });
       var rm = document.createElement("button"); rm.className = "small danger rm"; rm.textContent = "Remove";
       rm.addEventListener("click", function () {
         if (busy) return;
         if (!confirm("Remove " + c.plate + "?")) return;
         cars.splice(i, 1); save("Removed " + c.plate + ".");
       });
-      card.appendChild(info); card.appendChild(rm); list.appendChild(card);
+      var side = document.createElement("div"); side.className = "side"; side.appendChild(star); side.appendChild(rm);
+      card.appendChild(info); card.appendChild(side); list.appendChild(card);
     });
     var bl = $("badLines");
     if (bad.length) { bl.hidden = false; bl.textContent = "Warning: " + bad.length + " line(s) in cars.txt could not be read and are kept as they are: " + bad.join(" | "); }
@@ -412,14 +591,16 @@
 
   function showSetup(show) {
     $("setup").hidden = !show;
-    $("owner").value = cfg.owner; $("repo").value = cfg.repo; $("token").value = "";
+    $("owner").value = cfg.owner; $("repo").value = cfg.repo; $("token").value = ""; $("lookupKey").value = "";
+    $("lookupKey").placeholder = store.get("pk_motorapi") ? "(saved on this device - leave empty to keep)" : "optional - free key from motorapi.dk";
     $("cancelSetup").hidden = !(cfg.token && $("app").hidden === false);
   }
   function showApp() { $("app").hidden = false; $("setup").hidden = true; }
 
   function resetAddForm() {
     var t = todayISO();
-    $("plate").value = ""; $("din").value = t; $("dout").value = addDays(t, 3);
+    $("plate").value = ""; $("label").value = ""; $("din").value = t; $("dout").value = addDays(t, 3);
+    clearTimeout(lookupTimer); setLookup("", ""); updateFavBtn();
   }
 
   // ---------- buttons ----------
@@ -428,13 +609,14 @@
     if (!o || !r || !t) { setMsg("Fill in the username, repository name and token.", "err"); return; }
     cfg = { owner: o, repo: r, token: t };
     store.set("pk_owner", o); store.set("pk_repo", r); store.set("pk_token", t);
+    var lk = $("lookupKey").value.trim(); if (lk) store.set("pk_motorapi", lk);
     load();
   });
   $("cancelSetup").addEventListener("click", function () { $("setup").hidden = true; });
   $("settings").addEventListener("click", function () { showSetup(true); $("cancelSetup").hidden = false; });
   $("forget").addEventListener("click", function () {
-    if (!confirm("Remove the saved token from this device?")) return;
-    store.del("pk_token"); cfg.token = ""; $("app").hidden = true; showSetup(true); setMsg("Token removed from this device.", "info");
+    if (!confirm("Remove the saved token and lookup key from this device?")) return;
+    store.del("pk_token"); store.del("pk_motorapi"); cfg.token = ""; $("app").hidden = true; showSetup(true); setMsg("Token removed from this device.", "info");
   });
   $("reload").addEventListener("click", function () { if (!busy) load(); });
   $("pubOn").checked = store.get("pk_public") === "1";
@@ -465,12 +647,23 @@
     save("Added " + plate + ".");
   });
 
+  $("plate").addEventListener("input", scheduleLookup);
+  $("lookupBtn").addEventListener("click", function () {
+    var plate = normPlate($("plate").value);
+    if (plate.length < 2) { setMsg("Type the license plate first.", "err"); return; }
+    doLookup(plate, true);
+  });
+  $("favBtn").addEventListener("click", function () {
+    var plate = normPlate($("plate").value);
+    toggleFavorite(plate, $("label").value.trim() || (lastLookup.plate === plate ? lastLookup.text : ""));
+  });
+
   // ---------- start ----------
   resetAddForm();
   if (cfg.owner && cfg.repo && cfg.token) { load(); }
   else { showSetup(true); setMsg("", "info"); }
 
-  window.__parking = { parseCars: parseCars, serializeCars: serializeCars, toB64: toB64, fromB64: fromB64, carStatus: carStatus, parseDate: parseDate, maskPlate: maskPlate };
+  window.__parking = { parseCars: parseCars, serializeCars: serializeCars, toB64: toB64, fromB64: fromB64, carStatus: carStatus, parseDate: parseDate, maskPlate: maskPlate, describeVehicle: describeVehicle };
 })();
 </script>
 </body>
