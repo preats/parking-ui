@@ -109,6 +109,7 @@
     <section>
       <h2>Cars</h2>
       <div id="cars"></div>
+      <div class="actions" id="cleanRow" hidden><button id="cleanBtn" class="small">Remove finished stays</button></div>
       <div id="badLines" class="muted" hidden></div>
     </section>
 
@@ -236,7 +237,7 @@
   }
 
   function carStatus(c, today) {
-    var last = addDays(c.dout, -1); // check-out day is not covered (same as the script's default)
+    var last = c.dout; // registration continues through the check-out day (include_checkout_day is on)
     if (today < c.din) return "upcoming";
     if (today <= last) return "active";
     return "finished";
@@ -540,7 +541,12 @@
         var right = document.createElement("span");
         if (run.status !== "completed") { right.textContent = "running..."; right.className = "wait-text"; }
         else if (run.conclusion === "success") { right.textContent = "OK"; right.className = "ok-text"; if (!lastOk) lastOk = when; }
-        else if (run.conclusion === "cancelled" || run.conclusion === "skipped") { right.textContent = "replaced by a newer run"; right.className = "muted"; }
+        else if (run.conclusion === "cancelled" || run.conclusion === "skipped") {
+          // GitHub reports a run that hit its time limit as "cancelled" too, so tell the two apart by how long it ran
+          var ran = (new Date(run.updated_at) - new Date(run.run_started_at || run.created_at)) / 60000;
+          if (run.conclusion === "cancelled" && ran >= 12) { right.textContent = "TIMED OUT"; right.className = "bad-text"; }
+          else { right.textContent = "replaced by a newer run"; right.className = "muted"; }
+        }
         else { right.textContent = "FAILED"; right.className = "bad-text"; }
         row.appendChild(left); row.appendChild(right); box.appendChild(row);
       });
@@ -584,6 +590,9 @@
       var side = document.createElement("div"); side.className = "side"; side.appendChild(star); side.appendChild(rm);
       card.appendChild(info); card.appendChild(side); list.appendChild(card);
     });
+    var over = cars.filter(function (c) { return c.dout < today; }).length;
+    $("cleanRow").hidden = !over;
+    $("cleanBtn").textContent = "Remove " + over + " finished stay" + (over === 1 ? "" : "s");
     var bl = $("badLines");
     if (bad.length) { bl.hidden = false; bl.textContent = "Warning: " + bad.length + " line(s) in cars.txt could not be read and are kept as they are: " + bad.join(" | "); }
     else bl.hidden = true;
@@ -647,6 +656,12 @@
     save("Added " + plate + ".");
   });
 
+  $("cleanBtn").addEventListener("click", function () {
+    if (busy) return;
+    var today = todayISO(), keep = cars.filter(function (c) { return c.dout >= today; }), n = cars.length - keep.length;
+    if (!n || !confirm("Remove " + n + " stay(s) whose check-out has passed?")) return;
+    cars = keep; save("Removed " + n + " finished stay" + (n === 1 ? "" : "s") + ".");
+  });
   $("plate").addEventListener("input", scheduleLookup);
   $("lookupBtn").addEventListener("click", function () {
     var plate = normPlate($("plate").value);
